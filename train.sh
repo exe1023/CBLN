@@ -1,0 +1,1 @@
+python3 main.py --gpu 1 --data_dir data --img_dir images --config config.json --exp_dir exp --year 2014
