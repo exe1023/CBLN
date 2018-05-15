@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from model.resnet import *
 from model.var_len_lstm import VariableLengthLSTM
@@ -78,10 +79,6 @@ class Net(nn.Module):
 
 		self.final_mlp = nn.Linear(config['model']['no_hidden_final_mlp'], self.ans_cnt)
 
-		self.softmax = nn.Softmax(dim=1)
-
-		self.loss = nn.CrossEntropyLoss()
-
 	'''
 	Computes a forward pass through the network
 
@@ -89,12 +86,11 @@ class Net(nn.Module):
 		image : input image
 		tokens : question tokens
 		glove_emb : glove embedding of the question
-		labels : ground truth tokens
 
 	Retuns: 
 		loss : hard cross entropy loss
 	'''
-	def forward(self, image, tokens, glove_emb, labels=None):
+	def forward(self, image, tokens, glove_emb):
 
 		####### Question Embedding #######
 		# get the lstm representation of the final state at time t
@@ -121,14 +117,8 @@ class Net(nn.Module):
 		full_embedding = self.dropout(full_embedding)
 		out = self.final_mlp(full_embedding)
 		
-		prob = self.softmax(out)
-		val, ind = torch.max(prob, dim=1)
-		# hard cross entropy loss
-		if labels is not None:
-			loss = self.loss(prob, labels)
-			return loss, ind
-		else:
-			return prob, ind
+		prob = F.log_softmax(out, dim=1)
+		return prob
 
 '''
 # testing code

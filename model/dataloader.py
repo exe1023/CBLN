@@ -66,6 +66,7 @@ class DataLoader(object):
 	'''
 	def get_mini_batch(self, ind, data_type='train'):
 		
+		volatile = False if data_type == 'train' else True
 		if data_type == 'train':
 			dataset = self.trainset.games
 		elif data_type == 'val':
@@ -88,7 +89,7 @@ class DataLoader(object):
 
 		# get the images from the dataset and convert them into torch.autograd.Variable
 		image = np.array([x.image.get_image() for x in data])
-		image = torch.autograd.Variable(torch.Tensor(image).cuda())
+		image = Variable(torch.Tensor(image).cuda(), volatile=volatile)
 		# reshape the image to (batch, channels, height, width) format
 		image = image.permute(0,3,1,2).contiguous()
 
@@ -104,15 +105,15 @@ class DataLoader(object):
 		for x in words:
 			for i in range(max_len-len(x)):
 				x.append('<unk>')
-		tokens = Variable(torch.LongTensor(tokens).cuda())
+		tokens = Variable(torch.LongTensor(tokens).cuda(), volatile=volatile)
 		
 		# get the ground truth answer, tokenize them and convert them into torch.autograd.Variable
 		ans = [x.majority_answer for x in data]
 		answer = [self.tokenizer.encode_answer(x) for x in ans]
-		answer = Variable(torch.LongTensor(answer).cuda())
+		answer = Variable(torch.LongTensor(answer).cuda(), volatile=volatile)
 		
 		# get the glove embeddings of the question token and convert them into torch.autograd.Variable
 		glove_emb = [self.glove.get_embeddings(x) for x in words]
-		glove_emb = Variable(torch.Tensor(glove_emb).cuda())
+		glove_emb = Variable(torch.Tensor(glove_emb).cuda(), volatile=volatile)
 
 		return image, tokens, glove_emb, answer

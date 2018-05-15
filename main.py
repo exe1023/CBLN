@@ -8,6 +8,7 @@ from model.dataloader import DataLoader
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 
 import numpy as np
@@ -70,7 +71,8 @@ def train(dataloader, model, optimizer):
 		image, tokens, glove_emb, answer = dataloader.get_mini_batch(iteration, data_type='train')
 
 		optimizer.zero_grad()
-		loss, ind = model(image, tokens, glove_emb, answer)
+		output = model(image, tokens, glove_emb)
+		loss = F.nll_loss(output, answer)
 		loss.backward()
 		optimizer.step()
 
@@ -81,6 +83,17 @@ def train(dataloader, model, optimizer):
 		# save model state
 		if iteration % 2000 == 0:
 			torch.save(model.state_dict(), os.path.join(args.exp_dir, 'iter_%s.pth'%str(iteration)))
+		
+		if iteration % 100 == 1:
+			image, tokens, glove_emb, answer = dataloader.get_mini_batch(iteration, data_type='val')
+			output = model(image, tokens, glove_emb)
+			
+			loss = F.nll_loss(output, answer).data[0]
+			
+			pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
+			correct = pred.eq(answer.data.view_as(pred)).long().cpu().sum()
+
+			print('Valid loss:', loss, 'Valid acc:', correct/len(answer))
 
 		# decrease learning rate by 10 after each step size
 		#if iteration % step_size == 0:
