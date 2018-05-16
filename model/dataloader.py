@@ -10,6 +10,7 @@ from vqa_preprocess.vqa_dataset import VQADataset
 
 import torch
 from torch.autograd import Variable
+from torch.utils.data import Dataset
 
 import numpy as np
 
@@ -21,14 +22,19 @@ DataLoader : to load the
                 - Tokenizer
                 - Glove Embeddings
 '''
-class DataLoader(object):
+class DataEngine(Dataset):
 
-    def __init__(self, config, data_dir, img_dir, year, test_set, batch_size):
-        super(DataLoader, self).__init__()
+    def __init__(self, 
+                 config, 
+                 data_dir, 
+                 img_dir, 
+                 year, 
+                 test_set, 
+                 data_type):
 
-        self.batch_size = batch_size
         self.total_len = None # total size of the dataset being used
         self.use_glove = config['model']['glove']
+        self.data_type = data_type
 
         # Load images
         logger.info('Loading images..')
@@ -42,18 +48,30 @@ class DataLoader(object):
 
         # Load data
         logger.info('Loading data..')
-        self.trainset = VQADataset(data_dir, year=year, which_set="train", image_builder=self.image_builder, 
-                                                    preprocess_answers=self.tokenizer.preprocess_answers)
-        self.validset = VQADataset(data_dir, year=year, which_set="val", image_builder=self.image_builder, 
-                                                    preprocess_answers=self.tokenizer.preprocess_answers)
-        self.testset = VQADataset(data_dir, year=year, which_set=test_set, image_builder=self.image_builder)
-
+        if data_type == 'train':
+            self.dataset = VQADataset(data_dir, year=year, which_set="train", image_builder=self.image_builder, 
+                                                        preprocess_answers=self.tokenizer.preprocess_answers)
+        elif data_type == 'val':
+            self.dataset = VQADataset(data_dir, year=year, which_set="val", image_builder=self.image_builder, 
+                                                       preprocess_answers=self.tokenizer.preprocess_answers)
+        else:
+            self.dataset = VQADataset(data_dir, year=year, which_set=test_set, image_builder=self.image_builder)
+        self.preprocess()
         # Load glove
         self.glove = None
         if self.use_glove:
             logger.info('Loading glove..')
             self.glove = GloveEmbeddings(os.path.join(data_dir, config["glove_name"]))
+    
+    def __len__(self):
+        return len(self.dataset.games)
 
+    def preprocess(self):
+        que = [x.question for x in self.dataset.games] 
+        tokens = [self.tokenizer.encode_question(x)[0] for x in que]
+        self.max_len = max([len(x) for x in tokens]) # max length of the question
+
+        
     '''
     Arguments:
         ind : current iteration which is converted to required indices to be loaded
@@ -65,57 +83,33 @@ class DataLoader(object):
         glove_emb : glove embedding of the question
         answer : ground truth tokens
     '''
-    def get_mini_batch(self, ind, data_type='train'):
-        
-        volatile = False if data_type == 'train' else True
-        if data_type == 'train':
-            dataset = self.trainset.games
-        elif data_type == 'val':
-            dataset = self.validset.games
-        elif data_type == 'test':
-            dataset = self.testset.games
+    def __getitem__(self, ind):
 
-        self.total_len = len(dataset) # total elements in dataset
-
-        # specify the start and end indices of the minibatch
-        # In case, the indices goes over total elements
-        # wrap the indices around the dataset
-        start_ind = (ind*self.batch_size)%self.total_len
-        end_ind = ((ind+1)*self.batch_size)%self.total_len
-        if start_ind < end_ind:
-            data = dataset[start_ind:end_ind]
-        else:
-            data = dataset[start_ind:self.total_len]
-            data.extend(dataset[0:end_ind])
-            random.shuffle(self.trainset.games)
+        dataset = self.dataset.games # just for simplified
+        data = dataset[ind]
 
         # get the images from the dataset and convert them into torch.autograd.Variable
-        image = np.array([x.image.get_image() for x in data])
-        image = Variable(torch.Tensor(image).cuda(), volatile=volatile)
+        image = torch.Tensor(data.image.get_image())
         # reshape the image to (batch, channels, height, width) format
-        image = image.permute(0,3,1,2).contiguous()
+        image = image.permute(2,0,1).contiguous()
 
         # get the questions from the dataset, tokenize them and convert them into torch.autograd.Variable
-        que = [x.question for x in data]
-        tokens = [self.tokenizer.encode_question(x)[0] for x in que]
-        words = [self.tokenizer.encode_question(x)[1] for x in que]
-        max_len = max([len(x) for x in tokens]) # max length of the question
+        tokens = self.tokenizer.encode_question(data.question)[0]
+        words = self.tokenizer.encode_question(data.question)[1]
         # pad the additional length with unknown token '<unk>'
-        for x in tokens:
-            for i in range(max_len-len(x)):
-                x.append(self.tokenizer.word2i['<unk>'])
-        for x in words:
-            for i in range(max_len-len(x)):
-                x.append('<unk>')
-        tokens = Variable(torch.LongTensor(tokens).cuda(), volatile=volatile)
+        for i in range(self.max_len-len(tokens)):
+            tokens.append(self.tokenizer.word2i['<unk>'])
+
+        for i in range(self.max_len-len(words)):
+            words.append('<unk>')
+        tokens = torch.LongTensor(tokens)
         
         # get the ground truth answer, tokenize them and convert them into torch.autograd.Variable
-        ans = [x.majority_answer for x in data]
-        answer = [self.tokenizer.encode_answer(x) for x in ans]
-        answer = Variable(torch.LongTensor(answer).cuda(), volatile=volatile)
+        answer = self.tokenizer.encode_answer(data.majority_answer)
+        answer = torch.LongTensor([answer])
         
         # get the glove embeddings of the question token and convert them into torch.autograd.Variable
-        glove_emb = [self.glove.get_embeddings(x) for x in words]
-        glove_emb = Variable(torch.Tensor(glove_emb).cuda(), volatile=volatile)
+        glove_emb = self.glove.get_embeddings(words)
+        glove_emb = torch.Tensor(glove_emb)
 
         return image, tokens, glove_emb, answer

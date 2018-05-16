@@ -4,12 +4,14 @@ import os
 import json
 
 from model.net import Net
-from model.dataloader import DataLoader
+from model.dataloader import DataEngine
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.autograd import Variable
+from torch.utils.data import DataLoader
 
 import numpy as np
 import time
@@ -61,72 +63,93 @@ Arguments:
 Returns:
     None
 '''
+
+def variablize(image, tokens, glove_emb, answer, volatile):
+    image = Variable(image.cuda(), volatile=volatile)
+    tokens = Variable(tokens.cuda(), volatile=volatile)
+    glove_emb = Variable(glove_emb.cuda(), volatile=volatile)
+    answer = Variable(answer.cuda(), volatile=volatile)
+    return image, tokens, glove_emb, answer
+
 def test(dataloader, model):
     model.eval()
     iteration = 0
     total_num, correct = 0, 0
     loss = 0
-    while iteration * dataloader.batch_size < dataloader.total_len:
-        image, tokens, glove_emb, answer = dataloader.get_mini_batch(iteration, data_type='val')
-
+    for image, tokens, glove_emb, answer in dataloader:
+        image, tokens, glove_emb, answer = variablize(image, tokens, glove_emb, answer, True)
         output = model(image, tokens, glove_emb)
         pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
         correct += pred.eq(answer.data.view_as(pred)).long().cpu().sum()
         total_num += len(answer)
-        loss += F.nll_loss(output, answer).data[0]    
+        loss += F.nll_loss(output, answer.view(-1)).data[0]    
         iteration += 1
-        print(iteration*dataloader.batch_size, dataloader.total_len)
+        if iteration > 20:
+            break
     return loss/iteration, correct/total_num
 
         
-def train(dataloader, model, optimizer):
+def train(train_dataloader, val_dataloader, model, optimizer):
 
     model.train()
     iteration = 0
     
     train_log = open(args.config + '.log.train', 'w')
     valid_log = open(args.config + '.log.valid', 'w')
-    while iteration < max_iters:
-        st = time.time()
-        image, tokens, glove_emb, answer = dataloader.get_mini_batch(iteration, data_type='train')
+    for epoch in range(10):
+        for image, tokens, glove_emb, answer in train_dataloader:
+            image, tokens, glove_emb, answer = variablize(image, tokens, glove_emb, answer, False)
+            st = time.time()
 
-        optimizer.zero_grad()
-        output = model(image, tokens, glove_emb)
-        loss = F.nll_loss(output, answer)
-        loss.backward()
-        optimizer.step()
+            optimizer.zero_grad()
+            output = model(image, tokens, glove_emb)
+            loss = F.nll_loss(output, answer.view(-1))
+            loss.backward()
+            optimizer.step()
         
-        train_log.write(str(loss.data[0]) + '\n')
-        if iteration % 10 == 0:
-            print('iteration: ', iteration, 'loss: ', loss.data[0], 'time taken: ', time.time()-st)
+            train_log.write(str(loss.data[0]) + '\n')
+            if iteration % 10 == 0:
+                print('iteration: ', iteration, 'loss: ', loss.data[0], 'time taken: ', time.time()-st)
 
-        # save model state
-        if iteration % 2000 == 0:
-            torch.save(model.state_dict(), os.path.join(args.exp_dir, 'iter_%s.pth'%str(iteration)))
-        
-        if iteration % 1000 == 0:
-            valid_loss, valid_acc = test(dataloader, model)
-            print('Valid loss:', valid_loss, 'Valid acc:', valid_acc)
-            valid_log.write(str(valid_loss) + '\t' + str(valid_acc))
-        
-        iteration += 1
+            # save model state
+            if iteration % 2000 == 0:
+                torch.save(model.state_dict(), os.path.join(args.exp_dir, 'iter_%s.pth'%str(iteration)))
 
-        # decrease learning rate by 10 after each step size
-        #if iteration % step_size == 0:
-        #    lr = lr*0.1
-        #    for param_group in optimizer.param_groups:
-        #        param_group['lr'] = lr
+            if iteration % 100 == 0:
+                valid_loss, valid_acc = test(val_dataloader, model)
+                print('Valid loss:', valid_loss, 'Valid acc:', valid_acc)
+                valid_log.write(str(valid_loss) + '\t' + str(valid_acc))
+        
+            iteration += 1
+
+            # decrease learning rate by 10 after each step size
+            #if iteration % step_size == 0:
+            #    lr = lr*0.1
+            #    for param_group in optimizer.param_groups:
+            #        param_group['lr'] = lr
 
 
 def main():
-    dataloader = DataLoader(config, args.data_dir, args.img_dir, args.year, args.test_set, batch_size)
+    train_engine = DataEngine(config, args.data_dir, args.img_dir, args.year, args.test_set, 'train')
+    train_dataloader = DataLoader(train_engine,
+                              batch_size=batch_size,
+                              shuffle=True,
+                              num_workers=4,
+                              pin_memory=True)
+    val_engine = DataEngine(config, args.data_dir, args.img_dir, args.year, args.test_set, 'val')
+    val_dataloader = DataLoader(val_engine,
+                                batch_size=batch_size,
+                                shuffle=False,
+                                num_workers=4,
+                                pin_memory=True
+                                )
 
-    model = Net(config=config, no_words=dataloader.tokenizer.no_words, no_answers=dataloader.tokenizer.no_answers,
+    model = Net(config=config, no_words=train_engine.tokenizer.no_words, no_answers=train_engine.tokenizer.no_answers,
                 resnet_model=resnet_model, lstm_size=lstm_size, emb_size=emb_size, use_pretrained=args.use_pretrained).cuda()
     
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
-    train(dataloader, model, optimizer)
+    train(train_dataloader, val_dataloader, model, optimizer)
 
 if __name__ == '__main__':
     main()
