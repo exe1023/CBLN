@@ -14,12 +14,14 @@ class LSTM(nn.Module):
                  hidden_size,
                  num_layers=1,
                  dropout=0,
-                 bidirectional=1):
+                 bidirectional=1,
+                 batch_first=False):
         super(LSTM, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.direction = bidirectional + 1
+        self.batch_first = batch_first
 
         layers = []
         for i in range(num_layers):
@@ -52,9 +54,11 @@ class LSTM(nn.Module):
     def layer_forward(self, l, xs, h, reverse=False):
         '''
         return:
-            y: (seq_len, batch, hidden)
+            xs: (seq_len, batch, hidden)
             h: (1, batch, hidden)
         '''
+        if self.batch_first:
+            xs = xs.permute(1, 0, 2).contiguous()
         ys = []
         for i in range(xs.size(0)):
             if reverse:
@@ -69,7 +73,7 @@ class LSTM(nn.Module):
     def forward(self, x, hiddens):
         if self.direction > 1:
             x = torch.cat((x, x), 2)
-        if type(hiddens[0]) != list:
+        if type(hiddens) != list:
             # when the hidden feed is (direction * num_layer, batch, hidden)
             tmp = []
             for idx in range(hiddens[0].size(0)):
@@ -97,6 +101,8 @@ class LSTM(nn.Module):
 
         h = torch.cat(new_hs, 0)
         c = torch.cat(new_cs, 0)
+        if self.batch_first:
+            x = x.permute(1, 0, 2)
         return x, (h, c)
 
 class CLN(nn.Module):

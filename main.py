@@ -107,7 +107,7 @@ def train(train_dataloader, val_dataloader, model, optimizer):
             loss.backward()
             optimizer.step()
         
-            train_log.write(str(loss.data[0]) + '\n')
+            train_log.write(str(iteration) + '\t' + str(loss.data[0]) + '\n')
             if iteration % 10 == 0:
                 print('iteration: ', iteration, 'loss: ', loss.data[0], 'time taken: ', time.time()-st)
 
@@ -118,7 +118,7 @@ def train(train_dataloader, val_dataloader, model, optimizer):
             if iteration % 100 == 0:
                 valid_loss, valid_acc = test(val_dataloader, model)
                 print('Valid loss:', valid_loss, 'Valid acc:', valid_acc)
-                valid_log.write(str(valid_loss) + '\t' + str(valid_acc))
+                valid_log.write(str(iteration) + '\t' + str(valid_loss) + '\t' + str(valid_acc) + '\n')
         
             iteration += 1
 
