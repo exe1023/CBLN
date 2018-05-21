@@ -107,6 +107,10 @@ class Net(nn.Module):
         feature = feature / sq_sum
         attn_feature = self.attention(feature, lstm_emb)
 
+        # run Conditional layer norm
+        lstm_emb, internal_state = self.lstm(emb, attn_feature)
+        lstm_emb = lstm_emb[:,-1,:]
+
         ####### MLP for question and image embedding ########
         lstm_emb = lstm_emb.view(feature.data.shape[0], -1)
         que_embedding = self.que_mlp(lstm_emb)

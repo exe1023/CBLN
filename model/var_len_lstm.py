@@ -18,7 +18,7 @@ class VariableLengthLSTM(nn.Module):
         self.lstm = LSTM(input_size=self.word_emb_len, hidden_size=self.num_hidden, num_layers=self.depth, batch_first=True, dropout=0)
         #self.lstm = nn.LSTM(input_size=self.word_emb_len, hidden_size=self.num_hidden, num_layers=self.depth, batch_first=True, dropout=0)
 
-    def forward(self, word_emb):
+    def forward(self, word_emb, image_emb=None):
         batch_size = word_emb.size(0)
-        out = self.lstm(word_emb, self.lstm.init_hidden(batch_size))
+        out = self.lstm(word_emb, self.lstm.init_hidden(batch_size), image_emb)
         return out

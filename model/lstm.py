@@ -51,7 +51,7 @@ class LSTM(nn.Module):
                 hiddens.append((h, c))
         return hiddens
     
-    def layer_forward(self, l, xs, h, reverse=False):
+    def layer_forward(self, l, xs, h, image_emb, reverse=False):
         '''
         return:
             xs: (seq_len, batch, hidden)
@@ -65,12 +65,12 @@ class LSTM(nn.Module):
                 x = xs.narrow(0, (xs.size(0)-1)-i, 1)
             else:
                 x = xs.narrow(0, i, 1)
-            y, h = l(x, h)
+            y, h = l(x, h, image_emb)
             ys.append(y)
         y = torch.cat(ys, 0)
         return y, h
 
-    def forward(self, x, hiddens):
+    def forward(self, x, hiddens, image_emb=None):
         if self.direction > 1:
             x = torch.cat((x, x), 2)
         if type(hiddens) != list:
@@ -85,10 +85,10 @@ class LSTM(nn.Module):
         new_cs = []
         for l_idx in range(0, len(self.layers), self.direction):
             l, h = self.layers[l_idx], hiddens[l_idx]
-            f_x, f_h = self.layer_forward(l, x, h)
+            f_x, f_h = self.layer_forward(l, x, h, image_emb)
             if self.direction > 1:
                 l, h  = self.layers[l_idx+1], hiddens[l_idx+1]
-                r_x, r_h = self.layer_forward(l, x, h, reverse=True)
+                r_x, r_h = self.layer_forward(l, x, h, image_emb, reverse=True)
 
                 x = torch.cat((f_x, r_x), 2)
                 h = torch.cat((f_h[0], r_h[0]), 0)
@@ -137,6 +137,8 @@ class CLN(nn.Module):
         return delta_alpha, delta_beta
 
     def forward(self, x, image_emb):
+        if image_emb is None:
+            return x
         # x: (batch, input_size)
         size = x.size()
         x = x.view(x.size(0), -1)
@@ -286,12 +288,15 @@ class LayerNormLSTM(LSTMcell):
                                             dropout=dropout,
                                             dropout_method=dropout_method)
         if ln_preact:
-            self.ln_i2h = LayerNorm(4*hidden_size, learnable=learnable)
-            self.ln_h2h = LayerNorm(4*hidden_size, learnable=learnable)
+            #self.ln_i2h = LayerNorm(4*hidden_size, learnable=learnable)
+            #self.ln_h2h = LayerNorm(4*hidden_size, learnable=learnable)
+            self.ln_i2h = CLN(4*hidden_size, 2048)
+            self.ln_h2h = CLN(4*hidden_size, 2048)
         self.ln_preact = ln_preact
-        self.ln_cell = LayerNorm(hidden_size, learnable=learnable)
+        #self.ln_cell = LayerNorm(hidden_size, learnable=learnable)
+        self.ln_cell = CLN(hidden_size, 2048)
 
-    def forward(self, x, hidden):
+    def forward(self, x, hidden, image_emb=None):
         do_dropout = self.training and self.dropout > 0.0
         h, c = hidden
         h = h.view(h.size(1), -1)
@@ -302,8 +307,8 @@ class LayerNormLSTM(LSTMcell):
         i2h = self.i2h(x)
         h2h = self.h2h(h)
         if self.ln_preact:
-            i2h = self.ln_i2h(i2h)
-            h2h = self.ln_h2h(h2h)
+            i2h = self.ln_i2h(i2h, image_emb)
+            h2h = self.ln_h2h(h2h, image_emb)
         preact = i2h + h2h
 
         # activations
@@ -323,7 +328,7 @@ class LayerNormLSTM(LSTMcell):
                 c_t.data.set_(torch.mul(c_t, self.mask).data)
                 c_t.data *= 1.0/(1.0 - self.dropout)
 
-        c_t = self.ln_cell(c_t)
+        c_t = self.ln_cell(c_t, image_emb)
         h_t = torch.mul(o_t, c_t.tanh())
 
         # Reshape for compatibility
