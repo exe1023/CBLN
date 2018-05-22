@@ -7,8 +7,6 @@ import torch.utils.model_zoo as model_zoo
 
 from model.cbn import CBN
 
-from model.sequential_modified import Sequential
-
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
            'resnet152']
 
@@ -38,7 +36,7 @@ class Conv2d(nn.Module):
         self.out_planes = out_planes
         self.conv = nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, bias=bias)
 
-    def forward(self, x, lstm_emb):
+    def forward(self, x, lstm_emb=None):
         out = self.conv(x)
         return out, lstm_emb
 
@@ -46,30 +44,44 @@ class Conv2d(nn.Module):
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, lstm_size, emb_size, stride=1, downsample=None):
+    def __init__(self, inplanes, planes, lstm_size, emb_size, stride=1, downsample=None, cbn=True):
         super(BasicBlock, self).__init__()
+        self.cbn = cbn
         self.conv1 = conv3x3(inplanes, planes, stride)
-        # self.bn1 = nn.BatchNorm2d(planes)
-        self.bn1 = CBN(lstm_size, emb_size, planes)
+        if self.cbn:
+            self.bn1 = CBN(lstm_size, emb_size, planes)
+        else:
+            self.bn1 = nn.BatchNorm2d(planes)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = conv3x3(planes, planes)
-        # self.bn2 = nn.BatchNorm2d(planes)
-        self.bn2 = CBN(lstm_size, emb_size, planes)
+        if self.cbn:
+            self.bn2 = CBN(lstm_size, emb_size, planes)
+        else:
+            self.bn2 = nn.BatchNorm2d(planes)
         self.downsample = downsample
         self.stride = stride
 
-    def forward(self, x, lstm_emb):
+    def forward(self, x, lstm_emb=None):
         residual = x
 
         out = self.conv1(x)
-        out, _ = self.bn1(out, lstm_emb)
+        if self.cbn:
+            out, _ = self.bn1(out, lstm_emb)
+        else:
+            out = self.bn1(out)
         out = self.relu(out)
 
         out = self.conv2(out)
-        out, _ = self.bn2(out, lstm_emb)
+        if self.cbn:
+            out, _ = self.bn2(out, lstm_emb)
+        else:
+            out = self.bn2(out)
 
         if self.downsample is not None:
-            residual, _ = self.downsample(x, lstm_emb)
+            if self.cbn:
+                residual, _ = self.downsample(x, lstm_emb)
+            else:
+                residual = self.downsample(x)
 
         out += residual
         out = self.relu(out)
@@ -80,55 +92,91 @@ class BasicBlock(nn.Module):
 class Bottleneck(nn.Module):
     expansion = 4
 
-    def __init__(self, inplanes, planes, lstm_size, emb_size, stride=1, downsample=None):
+    def __init__(self, inplanes, planes, lstm_size, emb_size, stride=1, downsample=None, cbn=True):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
-        # self.bn1 = nn.BatchNorm2d(planes)
-        self.bn1 = CBN(lstm_size, emb_size, planes)
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride,
                                padding=1, bias=False)
-        # self.bn2 = nn.BatchNorm2d(planes)
-        self.bn2 = CBN(lstm_size, emb_size, planes)
         self.conv3 = nn.Conv2d(planes, planes * 4, kernel_size=1, bias=False)
-        # self.bn3 = nn.BatchNorm2d(planes * 4)
-        self.bn3 = CBN(lstm_size, emb_size, planes * 4)
+
+        self.cbn = cbn
+        if self.cbn:
+            self.bn1 = CBN(lstm_size, emb_size, planes)
+            self.bn2 = CBN(lstm_size, emb_size, planes)
+            self.bn3 = CBN(lstm_size, emb_size, planes * 4)
+        else:
+            self.bn1 = nn.BatchNorm2d(planes)
+            self.bn2 = nn.BatchNorm2d(planes)
+            self.bn3 = nn.BatchNorm2d(planes * 4)
+
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
 
-    def forward(self, x, lstm_emb):
+    def forward(self, x, lstm_emb=None):
         residual = x
 
         out = self.conv1(x)
-        out, _ = self.bn1(out, lstm_emb)
+        if self.cbn:
+            out, _ = self.bn1(out, lstm_emb)
+        else:
+            out = self.bn1(out)
         out = self.relu(out)
 
         out = self.conv2(out)
-        out, _ = self.bn2(out, lstm_emb)
+        if self.cbn:
+            out, _ = self.bn2(out, lstm_emb)
+        else:
+            out = self.bn2(out)
         out = self.relu(out)
 
         out = self.conv3(out)
-        out, _ = self.bn3(out, lstm_emb)
+        if self.cbn:
+            out, _ = self.bn3(out, lstm_emb)
+        else:
+            out = self.bn3(out)
 
         if self.downsample is not None:
-            residual, _ = self.downsample(x, lstm_emb)
+            if self.cbn:
+                residual, _ = self.downsample(x, lstm_emb)
+            else:
+                residual = self.downsample(x)
 
         out += residual
         out = self.relu(out)
 
-        return out, lstm_emb
+        # if we use condtioned batch norm,
+        # we will have lstm != emb -> return out, lstm_emb for modified Sequential
+        # Otherwise, simply return out
+        if lstm_emb is None:
+            return out
+        else:
+            return out, lstm_emb
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, lstm_size, emb_size, num_classes=1000):
+    def __init__(self, block, layers, lstm_size, emb_size, num_classes=1000, cbn=True):
         self.inplanes = 64
         self.lstm_size = lstm_size
         self.emb_size = emb_size
+        self.cbn = cbn
+
+        # if use conditioned batch norm, we need to modify Sequential to accept two inputs
+        if self.cbn:
+            from model.sequential_modified import Sequential
+            self.seq = Sequential
+        else:
+            from torch.nn import Sequential
+            self.seq = Sequential
         super(ResNet, self).__init__()
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
                                bias=False).cuda()
-        # self.bn1 = nn.BatchNorm2d(64)
-        self.bn1 = CBN(self.lstm_size, self.emb_size, 64)
+        
+        if self.cbn:
+            self.bn1 = CBN(self.lstm_size, self.emb_size, 64)
+        else:
+            self.bn1 = nn.BatchNorm2d(64)
+
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
@@ -149,30 +197,41 @@ class ResNet(nn.Module):
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = Sequential(
-                Conv2d(self.inplanes, planes * block.expansion, kernel_size=1, stride=stride, bias=False),
-                CBN(self.lstm_size, self.emb_size, planes * block.expansion),
-                # nn.BatchNorm2d(planes * block.expansion),
-            )
+            if self.cbn:
+                conv = Conv2d(self.inplanes, planes * block.expansion, kernel_size=1, stride=stride, bias=False)
+                bn = CBN(self.lstm_size, self.emb_size, planes * block.expansion)
+            else:
+                conv = nn.Conv2d(self.inplanes, planes * block.expansion, kernel_size=1, stride=stride, bias=False)
+                bn = nn.BatchNorm2d(planes * block.expansion)
+            downsample = self.seq(conv, bn)
 
         layers = []
-        layers.append(block(self.inplanes, planes, self.lstm_size, self.emb_size, stride, downsample))
+        layers.append(block(self.inplanes, planes, self.lstm_size, self.emb_size, stride, downsample, self.cbn))
         self.inplanes = planes * block.expansion
         for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes, self.lstm_size, self.emb_size))
+            layers.append(block(self.inplanes, planes, self.lstm_size, self.emb_size, cbn=self.cbn))
 
-        return Sequential(*layers)
+        return self.seq(*layers)
 
     def forward(self, x, lstm_emb):
         x = self.conv1(x)
-        x, _ = self.bn1(x, lstm_emb)
+        if self.cbn:
+            x, _ = self.bn1(x, lstm_emb)
+        else:
+            x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
 
-        x, _ = self.layer1(x, lstm_emb)
-        x, _ = self.layer2(x, lstm_emb)
-        x, _ = self.layer3(x, lstm_emb)
-        x, _ = self.layer4(x, lstm_emb)
+        if self.cbn:
+            x, _ = self.layer1(x, lstm_emb)
+            x, _ = self.layer2(x, lstm_emb)
+            x, _ = self.layer3(x, lstm_emb)
+            x, _ = self.layer4(x, lstm_emb)
+        else:
+            x = self.layer1(x)
+            x = self.layer2(x)
+            x = self.layer3(x)
+            x = self.layer4(x)
 
         # not required currently
         # x = self.avgpool(x)
@@ -193,7 +252,7 @@ def resnet18(lstm_size, emb_size, pretrained=False, **kwargs):
     return model
 
 
-def resnet34(lstm_size, emb_size,pretrained=False, **kwargs):
+def resnet34(lstm_size, emb_size, pretrained=False, **kwargs):
     """Constructs a ResNet-34 model.
 
     Args:

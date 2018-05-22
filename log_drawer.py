@@ -12,8 +12,8 @@ if __name__ == '__main__':
     config = ['baseline.json', 'ln.json', 'cbln.json']
 
     for c in config:
-        train_log = c + '.log.train'
-        valid_log = c + '.log.valid'
+        train_log = 'logs/' + c + '.log.train'
+        valid_log = 'logs/' + c + '.log.valid'
 
         train_loss = []
         train_idx = []
@@ -36,4 +36,5 @@ if __name__ == '__main__':
         valid_idx, valid_acc = smoothing(valid_idx, valid_acc)
         #plt.plot(train_idx, train_loss)
         plt.plot(valid_idx, valid_acc, label=c)
+    plt.legend(prop={'size':15})
     plt.show()

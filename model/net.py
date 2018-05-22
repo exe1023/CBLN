@@ -19,17 +19,17 @@ Arguments:
 Returns:
     model : requried resnet model
 '''
-def create_resnet(n, lstm_size, emb_size, use_pretrained):
+def create_resnet(n, lstm_size, emb_size, use_pretrained, cbn):
     if n == 18:
-        model = resnet18(lstm_size, emb_size, pretrained=use_pretrained).cuda()
+        model = resnet18(lstm_size, emb_size, pretrained=use_pretrained, cbn=cbn).cuda()
     if n == 34:
-        model = resnet34(lstm_size, emb_size, pretrained=use_pretrained).cuda()
+        model = resnet34(lstm_size, emb_size, pretrained=use_pretrained, cbn=cbn).cuda()
     if n == 50:
-        model = resnet50(lstm_size, emb_size, pretrained=use_pretrained).cuda()
+        model = resnet50(lstm_size, emb_size, pretrained=use_pretrained, cbn=cbn).cuda()
     if n == 101:
-        model = resnet101(lstm_size, emb_size, pretrained=use_pretrained).cuda()
+        model = resnet101(lstm_size, emb_size, pretrained=use_pretrained, cbn=cbn).cuda()
     if n == 152:
-        model = resnet152(lstm_size, emb_size, pretrained=use_pretrained).cuda()
+        model = resnet152(lstm_size, emb_size, pretrained=use_pretrained, cbn=cbn).cuda()
 
     return model
 
@@ -59,10 +59,11 @@ class Net(nn.Module):
         self.lstm_size = lstm_size # lstm emb size to be passed to CBN layer
         self.emb_size = emb_size # hidden layer size of MLP used to predict delta beta and gamma parameters
         self.config = config # config file containing the values of parameters
+        self.cbn = config['model']['image']['cbn']['use_cbn']
         
         self.embedding = nn.Embedding(self.word_cnt, self.emb_size)
         self.lstm = VariableLengthLSTM(self.config['model']).cuda()
-        self.net = create_resnet(resnet_model, self.lstm_size, self.emb_size, self.use_pretrained)
+        self.net = create_resnet(resnet_model, self.lstm_size, self.emb_size, self.use_pretrained, self.cbn)
         self.attention = Attention(self.config).cuda()
         
         self.que_mlp = nn.Sequential(
